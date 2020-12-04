@@ -21,9 +21,19 @@
 int
 main(int argc, char **argv)
 {
+	/* initialize of the logging system */
 	pg_logging_init(argv[0]);
-	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_upgrade"));
+
+	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_migrator"));
+
+	/* read the command line options */
 	parseCommandLine(argc, argv);
+
+	/* read the configuration file */
+	prep_status("reading configuration file");
+	read_config_file();
+	check_ok();
+
 	return 0;
 }
 

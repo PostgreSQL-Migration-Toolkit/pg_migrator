@@ -24,6 +24,10 @@ typedef struct Opts
 void parseCommandLine(int argc, char *argv[]);
 
 
+/* guc.c */
+int read_config_file(void);
+char* get_source_type(void);
+
 /* util.c */
 
 /*
