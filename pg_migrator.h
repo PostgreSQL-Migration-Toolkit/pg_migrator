@@ -26,7 +26,16 @@ void parseCommandLine(int argc, char *argv[]);
 
 /* guc.c */
 int read_config_file(void);
+char* get_source_guc(char *guc);
+char* get_destination_guc(char *guc);
 char* get_source_type(void);
+char* get_source_dbusername(void);
+char* get_source_dbpassword(void);
+char* get_source_dbhost(void);
+
+/* oci_deparse.c */
+char* deparse_system_users(void);
+char* deparse_table_query(void);
 
 /* util.c */
 
