@@ -1,0 +1,4 @@
+comment = 'hash library'
+default_version = '1.0'
+module_pathname = '$libdir/libhash'
+relocatable = true

@@ -1,9 +1,3 @@
-/*
- *	pg_migrator.h
- *
- *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
- */
-
 #include <unistd.h>
 #include <assert.h>
 #include <sys/stat.h>
@@ -14,31 +8,6 @@
 #define QUERY_ALLOC			8192
 #define MESSAGE_WIDTH		60
 
-
-/* option.c */
-typedef struct Opts
-{
-	int verbose;
-} Opts;
-
-void parseCommandLine(int argc, char *argv[]);
-int verbose(void);
-
-/* guc.c */
-int read_config_file(void);
-char* get_source_guc(char *guc);
-char* get_destination_guc(char *guc);
-char* get_source_type(void);
-char* get_source_dbusername(void);
-char* get_source_dbpassword(void);
-char* get_source_dbhost(void);
-
-/* oci_deparse.c */
-char* deparse_system_users(void);
-char* deparse_user_tables(void);
-char* deparse_user_table_details(void);
-
-/* util.c */
 
 /*
  * Enumeration to denote pg_log modes
@@ -51,6 +20,12 @@ typedef enum
 	PG_WARNING,
 	PG_FATAL
 } eLogType;
+
+typedef struct Bitmapset
+{
+	int			nwords;			/* number of words in array */
+	bitmapword	words[FLEXIBLE_ARRAY_MEMBER];	/* really [nwords] */
+} Bitmapset;
 
 /*
  *	LogOpts
@@ -73,4 +48,5 @@ void		prep_status(const char *fmt,...) pg_attribute_printf(1, 2);
 void		check_ok(void);
 unsigned int str2uint(const char *str);
 void		pg_putenv(const char *var, const char *val);
-
+Size		add_size(Size s1, Size s2);
+Size		mul_size(Size s1, Size s2);

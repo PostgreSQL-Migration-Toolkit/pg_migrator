@@ -60,7 +60,7 @@ parseCommandLine(int argc, char *argv[])
 		switch (option)
 		{
 			case 'v':
-				opts.verbose = 1;
+				opts.verbose++;
 				break;
 			default:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -68,6 +68,7 @@ parseCommandLine(int argc, char *argv[])
 				exit(1);
 		}
 	}
+	printf("\n%d\n", opts.verbose);
 }
 
 
@@ -83,3 +84,10 @@ usage(void)
 	printf(_("  -?, --help                    show this help, then exit\n"));
 	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }
+
+int
+verbose(void)
+{
+	return opts.verbose;
+}
+

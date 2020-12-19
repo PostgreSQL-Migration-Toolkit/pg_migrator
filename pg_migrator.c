@@ -5,29 +5,71 @@
  *
  *	Copyright (c) 2010-2020, PostgreSQL Global Development Group
  */
-#include "postgres_fe.h"
-
-#include "pg_migrator.h"
-#include "catalog/pg_class_d.h"
-#include "common/file_perm.h"
-#include "common/logging.h"
-#include "common/restricted_token.h"
-#include "fe_utils/string_utils.h"
+#include "postgres.h"
 
 #ifdef HAVE_LANGINFO_H
 #include <langinfo.h>
 #endif
 
+#include "access/transam.h"
+#include "catalog/pg_class_d.h"
+#include "common/file_perm.h"
+#include "common/logging.h"
+#include "common/restricted_token.h"
+#include "fe_utils/string_utils.h"
+#include "utils/hsearch.h"
+#include "utils/inval.h"
+
 #include "db.h"
+#include "pg_migrator.h"
 
 #define MAX_STRING 1024
+
+static HTAB *hTableInfo = NULL;
+
+typedef struct
+{
+	char table_name[MAX_STRING];
+	char owner[MAX_STRING];
+} keyTableInfo;
+
+typedef struct
+{
+	keyTableInfo key;		/* hash key - must be first */
+	char comment[MAX_STRING];
+	char table_type[MAX_STRING];
+} entryTableInfo;
+
+typedef struct table_info
+{
+	char table_name[MAX_STRING];
+	char owner[MAX_STRING];
+	char comments[MAX_STRING];
+	char table_type[MAX_STRING];
+} table_info;
+
+typedef struct table_detail_info
+{
+	char table_name[MAX_STRING];
+	char owner[MAX_STRING];
+	char tablespace[MAX_STRING];
+	char comment[MAX_STRING];
+	char table_type[MAX_STRING];
+	bool nologging;
+	bool partitioned;
+	int fillfactor;
+} table_detail_info;
+
+table_info ti;
+table_detail_info dti;
+
+static int import_tables(void);
+static int reterive_table_info(table_info *ti);
+static int reterive_table_info_detail(table_detail_info *ti);
+
 int
 main(int argc, char **argv)
 {
-	char v1[MAX_STRING];
-	char v2[MAX_STRING];
-	char v3[MAX_STRING];
-	char v4[MAX_STRING];
 	int r;
 	
 	/* initialize of the logging system */
@@ -43,7 +85,6 @@ main(int argc, char **argv)
 	read_config_file();
 	check_ok();
 
-
 	prep_status("establishing remote session with source (%s)", get_source_dbhost());
 	r = dbinit();
 	if (r < 0)
@@ -54,130 +95,168 @@ main(int argc, char **argv)
 		return 0;
 	check_ok();
 	
-	prep_status("extracting data");
-	r = dbbegin();
+	prep_status("importing tables");
+	r = import_tables();
 	if (r < 0)
-		return 0;
+		goto exit;
 	
-	r = dbprepare(deparse_table_query());
-	if (r < 0)
-		return 0;
-	
-	r = dbbind_string(&v1, 1, MAX_STRING);
-	if (r < 0)
-		return 0;
-	
-	r = dbbind_string(&v2, 2, MAX_STRING);
-	if (r < 0)
-		return 0;
-	
-	r = dbbind_string(&v3, 3, MAX_STRING);
-	if (r < 0)
-		return 0;
-	
-	r = dbbind_string(&v4, 4, MAX_STRING);
-	if (r < 0)
-		return 0;
-	
-	r = dbexecute();
-	if (r < 0)
-	{
-		pg_log(PG_FATAL,"\npg_stat_monitor: %s\n\t%s", "failed to execute query", get_db_log());
-		return 0;
-	}
-	for(;;)
-	{
-		printf("\n%s\t%s\t%s\t%s\n", v1, v2, v3, v4);
-		r = dbfetch();
-		if (r <= 0)
-			break;
-	}
 	check_ok();
 	prep_status("disconnecting from remote source session (%s)", get_source_dbhost());
 	dbcleanup();
 	check_ok();
 	return 0;
+
+exit:	
+	dbcleanup();
+	pg_log(PG_FATAL,"\npg_stat_monitor: %s\n\t%s", "failed to execute query", get_db_log());
+	return 0;
 }
 
-char*
-deparse_system_users(void)
+static int
+reterive_table_info(table_info *ti)
 {
-	char *query = "SELECT username from dba_users where username not in ('ANONYMOUS'\
-	,'APEX_040200'\
-	,'APEX_PUBLIC_USER'\
-	,'APPQOSSYS'\
-	,'AUDSYS'\
-	,'BI'\
-	,'CTXSYS'\
-	,'DBSNMP'\
-	,'DIP'\
-	,'DVF'\
-	,'DVSYS'\
-	,'EXFSYS'\
-	,'FLOWS_FILES'\
-	,'GSMADMIN_INTERNAL'\
-	,'GSMCATUSER'\
-	,'GSMUSER'\
-	,'HR'\
-	,'IX'\
-	,'LBACSYS'\
-	,'MDDATA'\
-	,'MDSYS'\
-	,'OE'\
-	,'ORACLE_OCM'\
-	,'ORDDATA'\
-	,'ORDPLUGINS'\
-	,'ORDSYS'\
-	,'OUTLN'\
-	,'PM'\
-	,'SCOTT'\
-	,'SH'\
-	,'SI_INFORMTN_SCHEMA'\
-	,'SPATIAL_CSW_ADMIN_USR'\
-	,'SPATIAL_WFS_ADMIN_USR'\
-	,'SYS'\
-	,'SYSBACKUP'\
-	,'SYSDG'\
-	,'SYSKM'\
-	,'SYSTEM'\
-	,'WMSYS'\
-	,'XDB'\
-	,'SYSMAN'\
-	,'RMAN'\
-	,'RMAN_BACKUP'\
-	,'OWBSYS'\
-	,'OWBSYS_AUDIT'\
-	,'APEX_030200'\
-	,'MGMT_VIEW'\
-	,'OJVMSYS')";
+	int         r;
+	HASHCTL     ctl;
 
-	return query;
+	MemSet(&ctl, 0, sizeof(ctl));
+	ctl.keysize = sizeof(keyTableInfo);
+	ctl.entrysize = sizeof(entryTableInfo);
+	hTableInfo = hash_create("pg_stat_monitor: table_info hash", 256, &ctl, HASH_ELEM | HASH_BLOBS);
+
+	if (verbose() >= 2)
+		pg_log(PG_REPORT,"\n---user-tables----\n%s\n---uesr-tables---\n", deparse_user_tables());
+	
+	r = dbbegin();
+	if (r < 0)
+		goto exit;
+
+	r = dbprepare(deparse_user_tables());
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->table_name, 1, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->comments, 2, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->table_type, 3, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->owner, 4, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbexecute();
+	if (r < 0)
+		goto exit;
+	
+	for(;;)
+	{
+		if (verbose() >= 5)
+			pg_log(PG_REPORT,"\n%s\t%s\t%s\t%s", ti->table_name, ti->comments, ti->table_type, ti->owner);
+		
+		if (verbose() >= 3)
+			prep_status("\treteriving identity information of the table (%s)", ti->table_name);
+		
+		if (verbose() >= 3)
+			check_ok();
+		
+		r = dbfetch();
+		if (r <= 0)
+			break;
+	}
+	return 0;
+
+exit:
+	// query cleanup
+	return -1;
 }
 
-char table_info_query[1024]; 
-
-char*
-deparse_table_query(void)
+static int
+reterive_table_info_detail(table_detail_info *ti)
 {
-	sprintf(table_info_query, "%s (%s) %s", 
-						"SELECT A.TABLE_NAME,				\
-							A.COMMENTS,						\
-							A.TABLE_TYPE,					\
-							A.OWNER							\
-							FROM							\
-					 		ALL_TAB_COMMENTS A,				\
-					 		ALL_OBJECTS O					\
-						WHERE 								\
-							A.OWNER = O.OWNER				\
-						AND A.TABLE_NAME = O.OBJECT_NAME	\
-						AND O.OBJECT_TYPE = 'TABLE'			\
-						AND A.OWNER IN ", deparse_system_users()," AND (A.OWNER, A.TABLE_NAME) \
-							NOT IN (SELECT OWNER, MVIEW_NAME FROM ALL_MVIEWS UNION ALL SELECT LOG_OWNER, LOG_TABLE FROM ALL_MVIEW_LOGS)\
-							AND (A.OWNER, A.TABLE_NAME)\
-							NOT IN (SELECT OWNER, TABLE_NAME FROM ALL_OBJECT_TABLES)");
+	int r;
+	
+	r = dbbegin();
+	if (r < 0)
+		goto exit;
 
-	return table_info_query;
+	if (verbose() >= 2)
+		pg_log(PG_REPORT,"\n---user-table-details---\n%s\n---user-table-details---\n", deparse_user_table_details());
+	
+	r = dbprepare(deparse_user_table_details());
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->table_name, 1, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->owner, 2, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->tablespace, 3, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbbind_string(&ti->nologging, 4, MAX_STRING);
+	if (r < 0)
+		goto exit;
+
+	r = dbbind_string(&ti->partitioned, 5, MAX_STRING);
+	if (r < 0)
+		goto exit;
+
+	r = dbbind_string(&ti->fillfactor, 6, MAX_STRING);
+	if (r < 0)
+		goto exit;
+	
+	r = dbexecute();
+	if (r < 0)
+		goto exit;
+	
+	for(;;)
+	{
+		if (verbose() >= 5)
+			pg_log(PG_REPORT,"\n%s\t%s\t%s\t%s", ti->table_name, ti->comment, ti->table_type, ti->owner);
+		
+		//hash_search(ti.table_name);	
+		//ti.comment = key.comment;
+		//ti.table_type = key.table_type
+		r = dbfetch();
+		if (r <= 0)
+			break;
+	}
+	return 0;
+
+exit:
+	return -1;
 }
 
+int
+import_tables(void)
+{
+	int r;
+	
+	if (verbose() >= 2)
+		pg_log(PG_REPORT,"\n---import-tables---\n%s\n---import-tables---\n", deparse_user_tables());
+		
+	r = reterive_table_info(&ti);
+	if (r < 0)
+		goto exit;
+	
+	r = reterive_table_info_detail(&dti);
+	if (r < 0)
+		goto exit;
+	
+	return 0;
 
-
+exit:
+	// query cleanup
+	return -1;
+}
