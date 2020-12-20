@@ -1,13 +1,35 @@
-addons:
-  sonarcloud:
-    organization: "postgresql-migration-toolkit"
-    token:
-      secure: "**************************" # encrypted value of your token
-
-script:
-  # Wraps the compilation with the Build Wrapper to generate configuration (used
-  # later by the SonarScanner) into the "bw-output" folder
-  - build-wrapper-linux-x86-64 --out-dir bw-output make
-  # And finally run the SonarCloud analysis - read the "sonar-project.properties"
-  # file to see the specific configuration
-  - sonar-scanner -Dsonar.cfamily.build-wrapper-output=bw-output
+sudo: required
+dist: 
+   - trusty
+   - osx
+language: c
+cache:
+  apt: true
+  directories:
+    - /home/travis/postgresql
+env:
+  global:
+    - enable_coverage=yes
+    - PG_PRELOAD=pg_migrator
+  matrix:
+    - PGVERSION=10
+    - PGVERSION=11
+    - PGVERSION=12
+    - PGVERSION=13
+before_install:
+  - git clone -b v0.7.9 --depth 1 https://github.com/citusdata/tools.git
+  - sudo make -C tools install
+  - setup_apt
+  - nuke_pg
+install:
+  - sudo locale-gen da_DK
+  - sudo locale-gen da_DK.utf8
+  - sudo pip install cpp-coveralls
+  - install_pg
+  - install_custom_pg
+before_script:
+  - config_and_start_cluster
+script: pg_travis_test
+after_success:
+  - sudo chmod 666 *.gcda
+  - coveralls
