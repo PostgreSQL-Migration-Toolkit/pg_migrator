@@ -25,7 +25,6 @@ install:
   - sudo locale-gen da_DK
   - sudo locale-gen da_DK.utf8
   - sudo pip install cpp-coveralls
-  - sudo mysql -u root < sql/mysql.sql
   - install_pg
   - install_custom_pg
 before_script:
