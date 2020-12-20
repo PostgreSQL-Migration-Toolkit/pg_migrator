@@ -1,5 +1,4 @@
-[![Build Status](https://travis-ci.com/PostgreSQL-Migration-Toolkit/pg_migrator.svg?branch=master)][STATUS]
-[![Coverage](http://img.shields.io/coveralls/PostgreSQL-Migration-Toolkit/pg_migrator.svg)][COVERAGE]
+https://travis-ci.org/PostgreSQL-Migration-Toolkit/pg_migrator.svg?branch=main
 
 # pg_migrator
 Database Migration Toolkit 
