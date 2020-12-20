@@ -28,6 +28,7 @@ install:
   - install_pg
   - install_custom_pg
 before_script:
+  - export USE_PGXS=1
   - config_and_start_cluster
 script: pg_travis_test
 after_success:
